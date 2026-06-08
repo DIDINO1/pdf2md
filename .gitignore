@@ -1,0 +1,9 @@
+# MinerU output
+output/
+
+# MinerU logs
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
