@@ -4,6 +4,9 @@ output/
 # MinerU logs
 *.log
 
+# Temp file lists
+*.tmp
+
 # Windows
 Thumbs.db
 Desktop.ini
