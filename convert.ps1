@@ -36,7 +36,12 @@ function Convert-File {
             New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         }
 
-        $mineruArgs = @(
+        # Run MinerU and log output
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logHeader = "`n--- $timestamp ---`nFile: $FilePath`n"
+        Add-Content -Path $logFile -Value $logHeader -Encoding utf8
+
+        $argList = @(
             "-c", "from mineru.cli.client import main; main()",
             "-p", $FilePath,
             "-o", $OutputDir,
@@ -48,13 +53,16 @@ function Convert-File {
             "--image-analysis", "true"
         )
 
-        # Run MinerU and log output
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logHeader = "`n--- $timestamp ---`nFile: $FilePath`n"
-        $logHeader | Out-File $logFile -Append -Encoding utf8
+        $proc = Start-Process -FilePath $python -ArgumentList $argList `
+            -NoNewWindow -Wait -PassThru `
+            -RedirectStandardOutput "$env:TEMP\mineru_stdout.tmp" `
+            -RedirectStandardError "$env:TEMP\mineru_stderr.tmp"
 
-        & $python $mineruArgs 2>&1 | Out-File $logFile -Append -Encoding utf8
-        $exitCode = $LASTEXITCODE
+        Get-Content "$env:TEMP\mineru_stdout.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+        Get-Content "$env:TEMP\mineru_stderr.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+        Remove-Item "$env:TEMP\mineru_stdout.tmp", "$env:TEMP\mineru_stderr.tmp" -ErrorAction SilentlyContinue
+
+        $exitCode = $proc.ExitCode
 
         "Exit code: $exitCode" | Out-File $logFile -Append -Encoding utf8
         return $exitCode
@@ -173,7 +181,7 @@ try {
         Write-Host "File  : $fileName"
         Write-Host "Output: output\$stem\"
         Write-Host ""
-        Write-Host "Converting... (log: mineru.log)"
+        Write-Host "Converting... (log: logs/mineru_$logStamp.log)"
         Write-Host ""
 
         $exitCode = Convert-File -FilePath $InputPath -OutputDir $outputBase
@@ -185,7 +193,7 @@ try {
             Write-Host "  output\$stem\$stem\auto\$stem.md"
         } else {
             Write-Host "  [FAILED] Error code: $exitCode" -ForegroundColor Red
-            Write-Host "  Check mineru.log for details"
+            Write-Host "  Check logs/mineru_$logStamp.log for details"
         }
         Write-Host "=============================================="
     }
