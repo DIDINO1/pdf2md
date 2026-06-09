@@ -108,29 +108,38 @@ try {
         # ============ FOLDER MODE ============
         $folderName = Split-Path $InputPath -Leaf
         Write-Host "Scanning: $folderName"
-        Write-Host ""
 
-        $files = @(Get-ChildItem -Path $InputPath -Recurse -File |
-            Where-Object { $supportedExts -contains $_.Extension.ToLower() })
+        try {
+            $files = @(Get-ChildItem -LiteralPath $InputPath -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -and ($supportedExts -contains $_.Extension.ToLower()) })
+        } catch {
+            Write-Host "Scan error: $_" -ForegroundColor Red
+            $files = @()
+        }
 
-        $total = $files.Count
-        if ($total -eq 0) {
+        Write-Host "Found $($files.Count) file(s)."
+        if ($files.Count -eq 0) {
             Write-Host "No supported files found." -ForegroundColor Yellow
             Write-Host "Supported: PDF, DOCX, PPTX, XLSX, images"
             Wait-Exit
         }
 
-        Write-Host "Found $total file(s). Converting..."
-        Write-Host "(log: mineru.log)"
+        Write-Host "Converting... (log: logs/mineru_$logStamp.log)"
         Write-Host ""
 
         "" | Out-File $logFile -Encoding utf8
         $count = 0
         $failed = 0
+        $inputLen = $InputPath.TrimEnd('\').Length
 
         foreach ($f in $files) {
             $count++
-            $relPath = $f.FullName.Substring($InputPath.Length).TrimStart('\')
+            $fullPath = $f.FullName
+            if ($fullPath.Length -gt $inputLen) {
+                $relPath = $fullPath.Substring($inputLen).TrimStart('\')
+            } else {
+                $relPath = Split-Path $fullPath -Leaf
+            }
             $relDir = Split-Path $relPath -Parent
 
             if ($relDir) {
@@ -139,8 +148,8 @@ try {
                 $outDir = Join-Path $outputBase $folderName
             }
 
-            Write-Host -NoNewline "[$count/$total] "
-            $ec = Convert-File -FilePath $f.FullName -OutputDir $outDir
+            Write-Host -NoNewline "[$count/$($files.Count)] "
+            $ec = Convert-File -FilePath $fullPath -OutputDir $outDir
             if ($ec -ne 0) {
                 $failed++
                 Write-Host "  [FAILED]" -ForegroundColor Red
@@ -149,10 +158,10 @@ try {
 
         Write-Host ""
         Write-Host "=============================================="
-        $ok = $total - $failed
-        Write-Host "  Done! $ok / $total converted"
+        $ok = $files.Count - $failed
+        Write-Host "  Done! $ok / $($files.Count) converted"
         if ($failed -gt 0) {
-            Write-Host "  $failed failed - see mineru.log" -ForegroundColor Red
+            Write-Host "  $failed failed - see logs/mineru_$logStamp.log" -ForegroundColor Red
         }
         Write-Host "=============================================="
 
