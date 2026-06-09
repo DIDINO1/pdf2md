@@ -30,10 +30,8 @@ function Convert-File {
     param($FilePath, $OutputDir)
     $stem = [IO.Path]::GetFileNameWithoutExtension($FilePath)
     Write-Host "  $stem"
-    Write-Host "  [DEBUG] A: entering try, file=$stem" # REMOVE AFTER DEBUG
 
     try {
-        Write-Host "  [DEBUG] B: in try block" # REMOVE AFTER DEBUG
         if (-not (Test-Path $OutputDir)) {
             New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         }
