@@ -46,21 +46,30 @@ function Convert-File {
         $escapedOutput = $OutputDir -replace '"', '""'
         $allArgs = "-c ""from mineru.cli.client import main; main()"" -p ""$escapedPath"" -o ""$escapedOutput"" -m auto -b $backend -l $lang -f true -t true --image-analysis true"
 
-        $stdoutTmp = "$env:TEMP\mineru_out_${logStamp}.tmp"
-        $stderrTmp = "$env:TEMP\mineru_err_${logStamp}.tmp"
+        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+        $stdoutTmp = "$env:TEMP\mineru_out_${guid}.tmp"
+        $stderrTmp = "$env:TEMP\mineru_err_${guid}.tmp"
 
-        $proc = Start-Process -FilePath $python -ArgumentList $allArgs `
-            -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput $stdoutTmp `
-            -RedirectStandardError $stderrTmp
+        $exitCode = -1
+        try {
+            $proc = Start-Process -FilePath $python -ArgumentList $allArgs `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput $stdoutTmp `
+                -RedirectStandardError $stderrTmp `
+                -ErrorAction Stop
 
-        Get-Content $stdoutTmp -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
-        Get-Content $stderrTmp -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
-        Remove-Item $stdoutTmp, $stderrTmp -ErrorAction SilentlyContinue
+            $exitCode = $proc.ExitCode
+        }
+        catch {
+            Write-Host "  [ERR] Failed to launch MinerU: $_" -ForegroundColor Red
+        }
 
-        $exitCode = $proc.ExitCode
+        # Collect output
+        try { Get-Content $stdoutTmp -ErrorAction Stop | Add-Content -Path $logFile -Encoding utf8 } catch {}
+        try { Get-Content $stderrTmp -ErrorAction Stop | Add-Content -Path $logFile -Encoding utf8 } catch {}
+        try { Remove-Item $stdoutTmp, $stderrTmp -ErrorAction Stop } catch {}
 
-        "Exit code: $exitCode" | Out-File $logFile -Append -Encoding utf8
+        "Exit code: $exitCode" | Add-Content -Path $logFile -Encoding utf8
         return $exitCode
     }
     catch {
