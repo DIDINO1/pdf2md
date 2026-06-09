@@ -163,7 +163,7 @@ try {
             $relDir = Split-Path $relPath -Parent
 
             if ($relDir) {
-                $outDir = Join-Path $outputBase $folderName $relDir
+                $outDir = Join-Path (Join-Path $outputBase $folderName) $relDir
             } else {
                 $outDir = Join-Path $outputBase $folderName
             }
