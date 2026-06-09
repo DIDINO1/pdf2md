@@ -6,7 +6,9 @@ $scriptDir = $PSScriptRoot
 $workspace = Split-Path -Parent $scriptDir
 $python = Join-Path $workspace "mineru-env\Scripts\python.exe"
 $outputBase = Join-Path $scriptDir "output"
-$logFile = Join-Path $scriptDir "mineru.log"
+$logStamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$logFile = Join-Path $scriptDir "logs\mineru_$logStamp.log"
+$null = New-Item -ItemType Directory -Path (Join-Path $scriptDir "logs") -Force
 $backend = "pipeline"
 $lang = "ch"
 
@@ -30,9 +32,8 @@ function Convert-File {
     Write-Host "  $stem"
 
     try {
-        $dir = $OutputDir  # MinerU creates its own subdir
-        if (-not (Test-Path $dir)) {
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        if (-not (Test-Path $OutputDir)) {
+            New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         }
 
         $mineruArgs = @(
@@ -47,22 +48,19 @@ function Convert-File {
             "--image-analysis", "true"
         )
 
-        $result = & $python $mineruArgs 2>&1
+        # Run MinerU and log output
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        $logHeader = "`n--- $timestamp ---`nFile: $FilePath`n"
+        $logHeader | Out-File $logFile -Append -Encoding utf8
+
+        & $python $mineruArgs 2>&1 | Out-File $logFile -Append -Encoding utf8
         $exitCode = $LASTEXITCODE
 
-        # Write output to log
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        "--- $timestamp ---" | Out-File $logFile -Append -Encoding utf8
-        "File: $FilePath" | Out-File $logFile -Append -Encoding utf8
-        $result | Out-File $logFile -Append -Encoding utf8
         "Exit code: $exitCode" | Out-File $logFile -Append -Encoding utf8
-        "" | Out-File $logFile -Append -Encoding utf8
-
         return $exitCode
     }
     catch {
         Write-Host "  [ERROR] $_" -ForegroundColor Red
-        $_.Exception.Message | Out-File $logFile -Append -Encoding utf8
         return 1
     }
 }
@@ -196,7 +194,6 @@ catch {
     Write-Host "==============================================" -ForegroundColor Red
     Write-Host $_.Exception.Message -ForegroundColor Red
     Write-Host ""
-    $_.Exception.Message | Out-File $logFile -Append -Encoding utf8
 }
 
 # Always keep window open

@@ -1,8 +1,8 @@
 # MinerU output
 output/
 
-# MinerU logs
-*.log
+# Logs (timestamped, each run creates a new file)
+logs/
 
 # Temp file lists
 *.tmp
