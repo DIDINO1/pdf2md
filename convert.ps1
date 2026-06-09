@@ -36,40 +36,47 @@ function Convert-File {
             New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         }
 
-        # Run MinerU and log output
+        # Run MinerU via cmd /c to bypass PowerShell argument parsing
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logHeader = [Environment]::NewLine + "--- $timestamp ---" + [Environment]::NewLine + "File: $FilePath" + [Environment]::NewLine
-        Add-Content -Path $logFile -Value $logHeader -Encoding utf8
+        Add-Content -Path $logFile -Value "" -Encoding utf8
+        Add-Content -Path $logFile -Value "--- $timestamp ---" -Encoding utf8
+        Add-Content -Path $logFile -Value "File: $FilePath" -Encoding utf8
 
-        # Build single argument string (avoids PowerShell array parsing issues)
-        $escapedPath = $FilePath -replace '"', '""'
-        $escapedOutput = $OutputDir -replace '"', '""'
-        $allArgs = "-c ""from mineru.cli.client import main; main()"" -p ""$escapedPath"" -o ""$escapedOutput"" -m auto -b $backend -l $lang -f true -t true --image-analysis true"
-
+        # Write python arguments to a temp file to avoid all CLI escaping issues
         $guid = [Guid]::NewGuid().ToString('N').Substring(0, 8)
-        $stdoutTmp = "$env:TEMP\mineru_out_${guid}.tmp"
-        $stderrTmp = "$env:TEMP\mineru_err_${guid}.tmp"
+        $logTmp = "$env:TEMP\mineru_log_${guid}.tmp"
 
-        $exitCode = -1
+        # Use a temp Python script to avoid argument passing issues entirely
+        $pyScript = @"
+import sys
+sys.argv = ['mineru', '-p', r'$FilePath', '-o', r'$OutputDir', '-m', 'auto', '-b', '$backend', '-l', '$lang', '-f', 'true', '-t', 'true', '--image-analysis', 'true']
+from mineru.cli.client import main
+main()
+"@
+        $runnerScript = "$env:TEMP\_mineru_run_${guid}.py"
         try {
-            $proc = Start-Process -FilePath $python -ArgumentList $allArgs `
-                -NoNewWindow -Wait -PassThru `
-                -RedirectStandardOutput $stdoutTmp `
-                -RedirectStandardError $stderrTmp `
-                -ErrorAction Stop
+            $pyScript | Out-File -FilePath $runnerScript -Encoding utf8
+            $exitCode = -1
 
-            $exitCode = $proc.ExitCode
+            # Use cmd /c to launch python - avoids all PowerShell parsing
+            $cmd = "cmd /c `"`"$python`" `"$runnerScript`" >`"$logTmp`" 2>&1`""
+            Invoke-Expression $cmd
+            $exitCode = $LASTEXITCODE
+
+            # Append output to log
+            if (Test-Path $logTmp) {
+                Get-Content $logTmp | Add-Content -Path $logFile -Encoding utf8
+                Remove-Item $logTmp -Force
+            }
+
+            Remove-Item $runnerScript -Force
         }
         catch {
-            Write-Host "  [ERR] Failed to launch MinerU: $_" -ForegroundColor Red
+            Write-Host "  [ERR] $_" -ForegroundColor Red
+            Remove-Item $runnerScript, $logTmp -ErrorAction SilentlyContinue -Force
         }
 
-        # Collect output
-        try { Get-Content $stdoutTmp -ErrorAction Stop | Add-Content -Path $logFile -Encoding utf8 } catch {}
-        try { Get-Content $stderrTmp -ErrorAction Stop | Add-Content -Path $logFile -Encoding utf8 } catch {}
-        try { Remove-Item $stdoutTmp, $stderrTmp -ErrorAction Stop } catch {}
-
-        "Exit code: $exitCode" | Add-Content -Path $logFile -Encoding utf8
+        Add-Content -Path $logFile -Value "Exit code: $exitCode" -Encoding utf8
         return $exitCode
     }
     catch {
