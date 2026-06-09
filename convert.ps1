@@ -38,29 +38,25 @@ function Convert-File {
 
         # Run MinerU and log output
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logHeader = "`n--- $timestamp ---`nFile: $FilePath`n"
+        $logHeader = [Environment]::NewLine + "--- $timestamp ---" + [Environment]::NewLine + "File: $FilePath" + [Environment]::NewLine
         Add-Content -Path $logFile -Value $logHeader -Encoding utf8
 
-        $argList = @(
-            "-c", "from mineru.cli.client import main; main()",
-            "-p", $FilePath,
-            "-o", $OutputDir,
-            "-m", "auto",
-            "-b", $backend,
-            "-l", $lang,
-            "-f", "true",
-            "-t", "true",
-            "--image-analysis", "true"
-        )
+        # Build single argument string (avoids PowerShell array parsing issues)
+        $escapedPath = $FilePath -replace '"', '""'
+        $escapedOutput = $OutputDir -replace '"', '""'
+        $allArgs = "-c ""from mineru.cli.client import main; main()"" -p ""$escapedPath"" -o ""$escapedOutput"" -m auto -b $backend -l $lang -f true -t true --image-analysis true"
 
-        $proc = Start-Process -FilePath $python -ArgumentList $argList `
+        $stdoutTmp = "$env:TEMP\mineru_out_${logStamp}.tmp"
+        $stderrTmp = "$env:TEMP\mineru_err_${logStamp}.tmp"
+
+        $proc = Start-Process -FilePath $python -ArgumentList $allArgs `
             -NoNewWindow -Wait -PassThru `
-            -RedirectStandardOutput "$env:TEMP\mineru_stdout.tmp" `
-            -RedirectStandardError "$env:TEMP\mineru_stderr.tmp"
+            -RedirectStandardOutput $stdoutTmp `
+            -RedirectStandardError $stderrTmp
 
-        Get-Content "$env:TEMP\mineru_stdout.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
-        Get-Content "$env:TEMP\mineru_stderr.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
-        Remove-Item "$env:TEMP\mineru_stdout.tmp", "$env:TEMP\mineru_stderr.tmp" -ErrorAction SilentlyContinue
+        Get-Content $stdoutTmp -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+        Get-Content $stderrTmp -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+        Remove-Item $stdoutTmp, $stderrTmp -ErrorAction SilentlyContinue
 
         $exitCode = $proc.ExitCode
 
