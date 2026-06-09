@@ -30,8 +30,10 @@ function Convert-File {
     param($FilePath, $OutputDir)
     $stem = [IO.Path]::GetFileNameWithoutExtension($FilePath)
     Write-Host "  $stem"
+    Write-Host "  [DEBUG] A: entering try, file=$stem" # REMOVE AFTER DEBUG
 
     try {
+        Write-Host "  [DEBUG] B: in try block" # REMOVE AFTER DEBUG
         if (-not (Test-Path $OutputDir)) {
             New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
         }
@@ -221,7 +223,12 @@ catch {
     Write-Host "==============================================" -ForegroundColor Red
     Write-Host "  UNEXPECTED ERROR" -ForegroundColor Red
     Write-Host "==============================================" -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host "Message : $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Line    : $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
+    Write-Host "LineText: $($_.InvocationInfo.Line)" -ForegroundColor Red
+    Write-Host "Command : $($_.InvocationInfo.MyCommand.Name)" -ForegroundColor Red
+    Write-Host "Position: $($_.InvocationInfo.PositionMessage)" -ForegroundColor Red
+    Write-Host "Stack   : $($_.ScriptStackTrace)" -ForegroundColor Red
     Write-Host ""
 }
 
