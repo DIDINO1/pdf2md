@@ -18,76 +18,44 @@ $env:FORCE_COLOR = "0"
 
 $supportedExts = @(".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".gif", ".webp")
 
-# ---- Pause helper (always keeps window open) ----
 function Wait-Exit {
     Write-Host ""
     Read-Host "Press Enter to close"
     exit
 }
 
-# ---- Convert a single file ----
-function Convert-File {
-    param($FilePath, $OutputDir)
-    $stem = [IO.Path]::GetFileNameWithoutExtension($FilePath)
-    Write-Host "  $stem"
+function Invoke-MinerU {
+    param($SourcePath, $OutputDir)
 
-    try {
-        if (-not (Test-Path $OutputDir)) {
-            New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-        }
-
-        # Run MinerU via cmd /c to bypass PowerShell argument parsing
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        Add-Content -Path $logFile -Value "" -Encoding utf8
-        Add-Content -Path $logFile -Value "--- $timestamp ---" -Encoding utf8
-        Add-Content -Path $logFile -Value "File: $FilePath" -Encoding utf8
-
-        # Write python arguments to a temp file to avoid all CLI escaping issues
-        $guid = [Guid]::NewGuid().ToString('N').Substring(0, 8)
-        $logTmp = "$env:TEMP\mineru_log_${guid}.tmp"
-
-        # Use a temp Python script to avoid argument passing issues entirely
-        $pyScript = @"
-import sys
-sys.argv = ['mineru', '-p', r'$FilePath', '-o', r'$OutputDir', '-m', 'auto', '-b', '$backend', '-l', '$lang', '-f', 'true', '-t', 'true', '--image-analysis', 'true']
-from mineru.cli.client import main
-main()
-"@
-        $runnerScript = "$env:TEMP\_mineru_run_${guid}.py"
-        try {
-            $pyScript | Out-File -FilePath $runnerScript -Encoding utf8
-            $exitCode = -1
-
-            # Use cmd /c to launch python - avoids all PowerShell parsing
-            $cmd = "cmd /c `"`"$python`" `"$runnerScript`" >`"$logTmp`" 2>&1`""
-            Invoke-Expression $cmd
-            $exitCode = $LASTEXITCODE
-
-            # Append output to log
-            if (Test-Path $logTmp) {
-                Get-Content $logTmp | Add-Content -Path $logFile -Encoding utf8
-                Remove-Item $logTmp -Force
-            }
-
-            Remove-Item $runnerScript -Force
-        }
-        catch {
-            Write-Host "  [ERR] $_" -ForegroundColor Red
-            Remove-Item $runnerScript, $logTmp -ErrorAction SilentlyContinue -Force
-        }
-
-        Add-Content -Path $logFile -Value "Exit code: $exitCode" -Encoding utf8
-        return $exitCode
+    if (-not (Test-Path $OutputDir)) {
+        New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
     }
-    catch {
-        Write-Host "  [ERROR] $_" -ForegroundColor Red
-        return 1
-    }
+
+    # Build argument string with proper quoting for paths with CJK/special chars
+    $escapedSource = $SourcePath -replace '"', '""'
+    $escapedOutput = $OutputDir -replace '"', '""'
+    $allArgs = "-c ""from mineru.cli.client import main; main()"" -p ""$escapedSource"" -o ""$escapedOutput"" -m auto -b $backend -l $lang -f true -t true --image-analysis true"
+
+    Add-Content -Path $logFile -Value "" -Encoding utf8
+    Add-Content -Path $logFile -Value "--- $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ---" -Encoding utf8
+    Add-Content -Path $logFile -Value "Source: $SourcePath" -Encoding utf8
+    Add-Content -Path $logFile -Value "Output: $OutputDir" -Encoding utf8
+
+    $proc = Start-Process -FilePath $python -ArgumentList $allArgs `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput "$env:TEMP\mineru_out.tmp" `
+        -RedirectStandardError "$env:TEMP\mineru_err.tmp"
+
+    Get-Content "$env:TEMP\mineru_out.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+    Get-Content "$env:TEMP\mineru_err.tmp" -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding utf8
+    Remove-Item "$env:TEMP\mineru_out.tmp", "$env:TEMP\mineru_err.tmp" -ErrorAction SilentlyContinue
+
+    Add-Content -Path $logFile -Value "Exit code: $($proc.ExitCode)" -Encoding utf8
+    return $proc.ExitCode
 }
 
 # ---- MAIN ----
 try {
-    # Check Python
     if (-not (Test-Path $python)) {
         Write-Host "[ERROR] MinerU Python not found:" -ForegroundColor Red
         Write-Host "  $python"
@@ -102,12 +70,11 @@ try {
     Write-Host "=============================================="
     Write-Host ""
 
-    # Get input path
     if ($InputPath -eq "") {
         $InputPath = Read-Host "Drag file/folder here and press Enter"
     }
     if ($InputPath -eq "") {
-        Write-Host "No path entered. Exiting."
+        Write-Host "No path entered."
         Wait-Exit
     }
 
@@ -124,64 +91,68 @@ try {
         Wait-Exit
     }
 
+    "" | Out-File $logFile -Encoding utf8
+
     if (Test-Path $InputPath -PathType Container) {
         # ============ FOLDER MODE ============
         $folderName = Split-Path $InputPath -Leaf
         Write-Host "Scanning: $folderName"
 
-        try {
-            $files = @(Get-ChildItem -LiteralPath $InputPath -Recurse -File -ErrorAction SilentlyContinue |
-                Where-Object { $_.Extension -and ($supportedExts -contains $_.Extension.ToLower()) })
-        } catch {
-            Write-Host "Scan error: $_" -ForegroundColor Red
-            $files = @()
-        }
+        $allFiles = @(Get-ChildItem -LiteralPath $InputPath -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -and ($supportedExts -contains $_.Extension.ToLower()) })
 
-        Write-Host "Found $($files.Count) file(s)."
-        if ($files.Count -eq 0) {
+        if ($allFiles.Count -eq 0) {
             Write-Host "No supported files found." -ForegroundColor Yellow
             Write-Host "Supported: PDF, DOCX, PPTX, XLSX, images"
             Wait-Exit
         }
 
-        Write-Host "Converting... (log: logs/mineru_$logStamp.log)"
+        # Group files by parent directory (one MinerU call per directory)
+        $groups = $allFiles | Group-Object DirectoryName
+        $totalDirs = @($groups).Count
+        $totalFiles = $allFiles.Count
+
+        Write-Host "Found $totalFiles file(s) in $totalDirs folder(s)."
+        Write-Host "Converting..."
+        Write-Host "(log: logs/mineru_$logStamp.log)"
         Write-Host ""
 
-        "" | Out-File $logFile -Encoding utf8
-        $count = 0
-        $failed = 0
-        $inputLen = $InputPath.TrimEnd('\').Length
+        $dirNum = 0
+        $failedFiles = 0
 
-        foreach ($f in $files) {
-            $count++
-            $fullPath = $f.FullName
-            if ($fullPath.Length -gt $inputLen) {
-                $relPath = $fullPath.Substring($inputLen).TrimStart('\')
-            } else {
-                $relPath = Split-Path $fullPath -Leaf
-            }
-            $relDir = Split-Path $relPath -Parent
+        foreach ($group in $groups) {
+            $dirNum++
+            $dirPath = $group.Name
+            $dirCount = $group.Count
+            $dirName = if ($dirPath -eq $InputPath) { "(root)" } else { $dirPath.Substring($InputPath.Length).TrimStart('\') }
 
-            if ($relDir) {
-                $outDir = Join-Path (Join-Path $outputBase $folderName) $relDir
-            } else {
+            Write-Host -NoNewline "[$dirNum/$totalDirs] $dirName ($dirCount files) ... "
+
+            # Output directory preserves sub-folder structure
+            if ($dirPath -eq $InputPath) {
                 $outDir = Join-Path $outputBase $folderName
+            } else {
+                $relDir = $dirPath.Substring($InputPath.Length).TrimStart('\')
+                $outDir = Join-Path (Join-Path $outputBase $folderName) $relDir
             }
 
-            Write-Host -NoNewline "[$count/$($files.Count)] "
-            $ec = Convert-File -FilePath $fullPath -OutputDir $outDir
-            if ($ec -ne 0) {
-                $failed++
-                Write-Host "  [FAILED]" -ForegroundColor Red
+            $ec = Invoke-MinerU -SourcePath $dirPath -OutputDir $outDir
+            if ($ec -eq 0) {
+                Write-Host "OK" -ForegroundColor Green
+            } else {
+                Write-Host "FAILED ($dirCount files)" -ForegroundColor Red
+                $failedFiles += $dirCount
             }
         }
 
         Write-Host ""
         Write-Host "=============================================="
-        $ok = $files.Count - $failed
-        Write-Host "  Done! $ok / $($files.Count) converted"
-        if ($failed -gt 0) {
-            Write-Host "  $failed failed - see logs/mineru_$logStamp.log" -ForegroundColor Red
+        $ok = $totalFiles - $failedFiles
+        if ($failedFiles -eq 0) {
+            Write-Host "  All $ok file(s) converted!" -ForegroundColor Green
+        } else {
+            Write-Host "  Done! $ok / $totalFiles converted" -ForegroundColor Yellow
+            Write-Host "  $failedFiles failed - see logs/mineru_$logStamp.log" -ForegroundColor Red
         }
         Write-Host "=============================================="
 
@@ -193,10 +164,10 @@ try {
         Write-Host "File  : $fileName"
         Write-Host "Output: output\$stem\"
         Write-Host ""
-        Write-Host "Converting... (log: logs/mineru_$logStamp.log)"
+        Write-Host "Converting..."
         Write-Host ""
 
-        $exitCode = Convert-File -FilePath $InputPath -OutputDir $outputBase
+        $exitCode = Invoke-MinerU -SourcePath $InputPath -OutputDir $outputBase
 
         Write-Host ""
         Write-Host "=============================================="
@@ -205,30 +176,23 @@ try {
             Write-Host "  output\$stem\$stem\auto\$stem.md"
         } else {
             Write-Host "  [FAILED] Error code: $exitCode" -ForegroundColor Red
-            Write-Host "  Check logs/mineru_$logStamp.log for details"
+            Write-Host "  Check logs/mineru_$logStamp.log"
         }
         Write-Host "=============================================="
     }
 
-    # Open output folder
     Write-Host ""
     Start-Process explorer.exe -ArgumentList $outputBase
     Write-Host "(Output folder opened)"
 
-}
-catch {
+} catch {
     Write-Host ""
     Write-Host "==============================================" -ForegroundColor Red
     Write-Host "  UNEXPECTED ERROR" -ForegroundColor Red
     Write-Host "==============================================" -ForegroundColor Red
-    Write-Host "Message : $($_.Exception.Message)" -ForegroundColor Red
-    Write-Host "Line    : $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
-    Write-Host "LineText: $($_.InvocationInfo.Line)" -ForegroundColor Red
-    Write-Host "Command : $($_.InvocationInfo.MyCommand.Name)" -ForegroundColor Red
-    Write-Host "Position: $($_.InvocationInfo.PositionMessage)" -ForegroundColor Red
-    Write-Host "Stack   : $($_.ScriptStackTrace)" -ForegroundColor Red
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host "Line: $($_.InvocationInfo.ScriptLineNumber)" -ForegroundColor Red
     Write-Host ""
 }
 
-# Always keep window open
 Wait-Exit
